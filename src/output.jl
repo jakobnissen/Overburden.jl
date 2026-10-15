@@ -58,10 +58,15 @@ function create_output(input::String, output::String)::Nothing
     return nothing
 end
 
+# Level 5 rather than BGZFLib's 6, since compression is the bottleneck of pass 2, and
+# level 5 makes it about 15% faster, for about 2% more output.
+const DEFAULT_COMPRESS_LEVEL = 5
+
 """
     overburden(
         input::String, output::String, depth::Int;
-        n_workers::Int = Threads.nthreads(), command_line::Union{String, Nothing} = nothing,
+        n_workers::Int = Threads.nthreads(), compress_level::Int = $(DEFAULT_COMPRESS_LEVEL),
+        command_line::Union{String, Nothing} = nothing,
     )::@NamedTuple{n_templates::Int, n_written::Int}
 
 Read the coordinate-sorted BAM file `input`, and write the records of a near-minimal set
@@ -69,7 +74,8 @@ of its templates to the BAM file `output`, such that at every reference position
 the output's depth is at least `min(depth, d(p))`, where `d(p)` is the input's depth.
 See [`select_templates`](@ref).
 
-The output has the input's header with an added `@PG` line, whose `CL` field is
+The output is compressed with BGZF at `compress_level`, from 1 (fastest) to 12
+(smallest). It has the input's header with an added `@PG` line, whose `CL` field is
 `command_line`, if given. Return the number of templates selected, and the number of
 records written.
 
@@ -83,8 +89,10 @@ function overburden(
         output::String,
         depth::Int;
         n_workers::Int = Threads.nthreads(),
+        compress_level::Int = DEFAULT_COMPRESS_LEVEL,
         command_line::Union{String, Nothing} = nothing,
     )::@NamedTuple{n_templates::Int, n_written::Int}
+    in(compress_level, 1:12) || throw(ArgumentError("compress_level must be in 1:12"))
     reader = open_bam(input; n_workers, copy = false)
     return try
         create_output(input, output)
@@ -92,7 +100,7 @@ function overburden(
             selected = select_templates(reader, depth)
             header = output_header(reader, command_line)
             XAM2.seek_first_record(reader)
-            n_written = BAMWriter(open(output, "w"), header, references(reader); n_workers) do writer
+            n_written = BAMWriter(open(output, "w"), header, references(reader); n_workers, compress_level) do writer
                 write_templates(writer, reader, selected)
             end
             (; n_templates = length(selected), n_written)

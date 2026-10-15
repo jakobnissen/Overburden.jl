@@ -42,6 +42,23 @@ end
     end
 end
 
+@testset "Compression level" begin
+    rng = Xoshiro(6)
+    input = write_records(TEST_DIR, random_records(rng, 300))
+    outputs = map((1, 12)) do compress_level
+        output = tempname(TEST_DIR) * ".bam"
+        overburden(input, output, 3; n_workers = 1, compress_level)
+        output
+    end
+    @test read_summary(outputs[1]) == read_summary(outputs[2])
+    @test filesize(outputs[1]) > filesize(outputs[2])
+    for compress_level in (0, 13)
+        output = tempname(TEST_DIR) * ".bam"
+        @test_throws ArgumentError overburden(input, output, 3; n_workers = 1, compress_level)
+        @test !ispath(output)
+    end
+end
+
 @testset "Output header" begin
     header = HEADER * "@PG\tID:overburden\tPN:overburden\n"
     input = sam_to_bam(TEST_DIR, header * SORTED)
@@ -119,6 +136,8 @@ end
     @test length(read_summary(output)) == 4
     @test run_main(["-d", "1", input, fresh_output()])[1] == 0
     @test run_main([input, fresh_output(), "--depth=1"])[1] == 0
+    @test run_main(["-l", "1", input, fresh_output()])[1] == 0
+    @test run_main([input, fresh_output(), "--level=12"])[1] == 0
     # The output must not exist yet
     (code, out, err) = run_main([input, output])
     @test code == 1
@@ -142,6 +161,8 @@ end
             (["--bogus", input, output], "--bogus"),
             (["-d", "0", input, output], "minimum"),
             (["-d", "x", input, output], "integer"),
+            (["-l", "0", input, output], "minimum"),
+            (["-l", "13", input, output], "maximum"),
         ]
         (code, out, err) = run_main(args)
         @test code == 2

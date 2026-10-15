@@ -7,6 +7,8 @@
     Templates are written in full or not at all."""
     "Minimum depth to keep"
     depth = default(option("-d", "--depth", integer("D"; min = 1)), 20)
+    "Compression level of the output, from 1 (fastest) to 12 (smallest)"
+    level = default(option("-l", "--level", integer("L"; min = 1, max = 12)), DEFAULT_COMPRESS_LEVEL)
     # Handled before parsing, but included so they're not rejected, and appear in the help
     "Print this help and exit"
     help = flag("-h", "--help")
@@ -64,7 +66,8 @@ function (@main)(args::Vector{String})::Cint
     command_line = join(pushfirst!(copy(args), "overburden"), ' ')
     return try
         (; n_templates, n_written) = overburden(
-            options.input, options.output, options.depth; command_line,
+            options.input, options.output, options.depth;
+            compress_level = options.level, command_line,
         )
         println(Core.stderr, "Wrote ", n_written, " records of ", n_templates, " templates")
         0
