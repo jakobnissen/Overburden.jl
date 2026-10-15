@@ -24,20 +24,38 @@ fail() {
     exit 1
 }
 
-out="$("$EXE" test/data/sorted.bam)" || fail "exit code on sorted input"
-[[ "$out" == "selected templates: 3" ]] || fail "unexpected output on sorted input: $out"
+OUT="$(mktemp -d)"
+trap 'rm -rf "$OUT"' EXIT
+
+err="$("$EXE" -d 1 test/data/sorted.bam "$OUT/out.bam" 2>&1)" || fail "exit code on sorted input"
+[[ "$err" == "Wrote 4 records of 3 templates" ]] || fail "unexpected output on sorted input: $err"
+# Check the output is a valid BAM file, by reading it back
+"$EXE" -d 1 "$OUT/out.bam" "$OUT/out2.bam" 2>/dev/null || fail "exit code on reading the output"
 
 status=0
-err="$("$EXE" test/data/unsorted.bam 2>&1)" || status=$?
+"$EXE" -d 1 test/data/sorted.bam "$OUT/out.bam" 2>/dev/null || status=$?
+[[ $status -eq 1 ]] || fail "exit code $status on existing output"
+
+status=0
+err="$("$EXE" test/data/unsorted.bam "$OUT/unsorted.bam" 2>&1)" || status=$?
 [[ $status -eq 1 ]] || fail "exit code $status on unsorted input"
 [[ "$err" == *"not coordinate sorted"* ]] || fail "unexpected error on unsorted input: $err"
+[[ ! -e "$OUT/unsorted.bam" ]] || fail "output left behind after unsorted input"
 
 status=0
-"$EXE" test/data/missing.bam 2>/dev/null || status=$?
+"$EXE" test/data/missing.bam "$OUT/missing.bam" 2>/dev/null || status=$?
 [[ $status -eq 1 ]] || fail "exit code $status on missing input"
 
-status=0
-"$EXE" 2>/dev/null || status=$?
-[[ $status -eq 2 ]] || fail "exit code $status with no arguments"
+for args in "" "test/data/sorted.bam" "-d 0 test/data/sorted.bam $OUT/out.bam"; do
+    status=0
+    # shellcheck disable=SC2086
+    "$EXE" $args 2>/dev/null || status=$?
+    [[ $status -eq 2 ]] || fail "exit code $status with arguments '$args'"
+done
+
+out="$("$EXE" --help)" || fail "exit code with --help"
+[[ "$out" == *"Usage: overburden"* ]] || fail "unexpected output with --help: $out"
+out="$("$EXE" --version)" || fail "exit code with --version"
+[[ "$out" == "overburden "* ]] || fail "unexpected output with --version: $out"
 
 echo "Smoke test OK"

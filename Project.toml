@@ -19,7 +19,7 @@ XAM2 = {path = "../XAM2.jl"}
 BinaryHeaps = "1.1.0"
 CIGARStrings = "0.2.1"
 MemoryViews = "0.5.0"
-OptParse = "0.4.2"
+OptParse = "0.4.3"
 julia = "1.13"
 
 [extras]

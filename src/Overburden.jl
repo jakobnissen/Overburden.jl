@@ -5,8 +5,7 @@ using BGZFLib: BGZFReader, BGZFError
 using BinaryHeaps: heapify!, heappop!, heappush!
 using Base.Order: By, Reverse
 using CIGARStrings: CIGARStrings, BAMCIGAR, CIGARError, aligned_blocks
-# `construct_exact`, `help` and `valuetype` are used unqualified by the expansion of `@parser`
-using OptParse: @parser, arg, construct_exact, default, flag, help, integer, option, optparse, str, valuetype
+using OptParse: OptParse, @parser, arg, default, flag, integer, option, optparse, print_help, str
 
 # Read at precompile time, so the executable doesn't need the Project.toml
 const PROJECT_TOML = joinpath(dirname(@__DIR__), "Project.toml")
