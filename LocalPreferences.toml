@@ -1,0 +1,3 @@
+[OptParse]
+# Make OptParse type stable, for juliac --trim
+juliac = true

@@ -125,15 +125,7 @@ mktempdir() do dir
         write(sam_path, HEADER * SORTED)
         @test_throws Exception count(sam_path)
     end
-
-    @testset "Entry point" begin
-        path = sam_to_bam(dir, HEADER * SORTED)
-        # Silence the output of the entry point
-        redirect(f) = redirect_stdio(f; stdout = devnull, stderr = devnull)
-        @test redirect(() -> Overburden.main([path])) == 0
-        @test redirect(() -> Overburden.main(String[])) == 2
-        @test redirect(() -> Overburden.main([joinpath(dir, "missing.bam")])) == 1
-    end
 end
 
 include("sweep.jl")
+include("output.jl")

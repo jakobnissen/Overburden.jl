@@ -1,10 +1,20 @@
 module Overburden
 
-using XAM2: XAM2, BAMReader, BAMRecord, XAMError, cigar, get_header, is_mapped, left_position, query_name, reference_index
+using XAM2: XAM2, BAMReader, BAMRecord, BAMWriter, SAMHeader, XAMError, cigar, get_header, is_mapped, left_position, query_name, reference_index, references
 using BGZFLib: BGZFReader, BGZFError
 using BinaryHeaps: heapify!, heappop!, heappush!
 using Base.Order: Reverse
 using CIGARStrings: CIGARStrings, BAMCIGAR, CIGARError, aligned_blocks
+# `construct_exact`, `help` and `valuetype` are used unqualified by the expansion of `@parser`
+using OptParse: @parser, arg, construct_exact, default, flag, help, integer, option, optparse, str, valuetype
+
+# Read at precompile time, so the executable doesn't need the Project.toml
+const PROJECT_TOML = joinpath(dirname(@__DIR__), "Project.toml")
+include_dependency(PROJECT_TOML)
+const OVERBURDEN_VERSION = let
+    m = match(r"^version\s*=\s*\"(.*)\"\s*$"m, read(PROJECT_TOML, String))
+    m === nothing ? error("no version in Project.toml") : String(m[1])
+end
 
 """
     OverburdenError(msg::String)
@@ -105,34 +115,8 @@ function check_sorted_header(reader::BAMReader)::Nothing
     return nothing
 end
 
-function print_error(e::Union{OverburdenError, XAMError, BGZFError, SystemError})
-    print(Core.stderr, "ERROR: ")
-    if e isa SystemError
-        # Base's `showerror(::IO, ::SystemError)` can't be trimmed
-        print(Core.stderr, e.prefix, ": ", Libc.strerror(e.errnum))
-    else
-        showerror(Core.stderr, e)
-    end
-    println(Core.stderr)
-    return nothing
-end
-
-function (@main)(args::Vector{String})::Cint
-    if length(args) != 1
-        println(Core.stderr, "usage: overburden <input.bam>")
-        return 2
-    end
-    return try
-        selected = select_templates(only(args), 20)
-        println(Core.stdout, "selected templates: ", length(selected))
-        0
-    catch e
-        e isa Union{OverburdenError, XAMError, BGZFError, SystemError} || rethrow()
-        print_error(e)
-        1
-    end
-end
-
 include("sweep.jl")
+include("output.jl")
+include("cli.jl")
 
 end # module Overburden

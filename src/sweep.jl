@@ -1,6 +1,6 @@
 # Pass 1: Select a near-minimal set of templates, such that the depth of the selected
 # templates is at least min(D, d(p)) at every position p, where d(p) is the full depth.
-# See PLAN.md for the algorithm.
+# See algorithm.md for the algorithm.
 
 """
     template_hash(name::Union{AbstractString, Nothing})::UInt64
@@ -88,8 +88,17 @@ function sweep_until!(sweep::Sweep, limit::Int)
     return sweep
 end
 
-"Process all remaining events. Afterwards, `sweep` is ready for the next reference."
-finish_reference!(sweep::Sweep) = sweep_until!(sweep, typemax(Int))
+"""
+    finish_reference!(sweep::Sweep)
+
+Process all remaining events. Afterwards, `sweep` is ready for the next reference.
+All blocks have ended, so the entries left in `candidates` are stale, and are discarded.
+"""
+function finish_reference!(sweep::Sweep)
+    sweep_until!(sweep, typemax(Int))
+    empty!(sweep.candidates)
+    return sweep
+end
 
 function process_event!(sweep::Sweep, position::Int)
     (; active, pending, unselected, candidates) = sweep

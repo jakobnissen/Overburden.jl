@@ -7,25 +7,25 @@ authors = ["Jakob Nybo Andersen <jnandersen@proton.me>"]
 BGZFLib = "b86bd9b6-aa64-492d-a0e2-e61a004d8aed"
 BinaryHeaps = "b2a6c25c-c996-4615-94ab-6e519ffb8690"
 CIGARStrings = "e5b51f81-6ffd-4e20-bbec-f118e37ea906"
-MemoryViews = "a791c907-b98b-4e44-8f4d-e4c2362c6b2f"
+OptParse = "1244ff17-1aa7-4121-9347-f4ead108e58f"
 XAM2 = "648a2d38-8fdb-4170-a152-848d525b0756"
-XAMAuxData = "e99d641e-1821-45d7-9150-ecb7bf333fe1"
 
 [sources]
 BGZFLib = {path = "../BGZFLib.jl"}
 CIGARStrings = {path = "../CIGARStrings.jl"}
 XAM2 = {path = "../XAM2.jl"}
-XAMAuxData = {path = "../XAMAuxData.jl"}
 
 [compat]
 BinaryHeaps = "1.1.0"
 CIGARStrings = "0.2.1"
 MemoryViews = "0.5.0"
+OptParse = "0.4.2"
 julia = "1.13"
 
 [extras]
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+MemoryViews = "a791c907-b98b-4e44-8f4d-e4c2362c6b2f"
 
 [targets]
-test = ["Random", "Test"]
+test = ["MemoryViews", "Random", "Test"]

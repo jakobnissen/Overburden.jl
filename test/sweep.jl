@@ -215,6 +215,19 @@ end
     end
 end
 
+@testset "Candidates do not carry over between references" begin
+    # On chr1, Q is a candidate ending at 100, which is not selected since P covers the
+    # position. On chr2, Q's stale candidate must not beat U, which extends further, so only
+    # U is needed there. Q's candidate is still alive if it's not cleared at the reference end.
+    records = [
+        TestRecord("P", 0, "chr1", 1, "101M"),
+        TestRecord("Q", 0, "chr1", 1, "100M"),
+        TestRecord("Q", 0, "chr2", 50, "20M"),
+        TestRecord("U", 0, "chr2", 50, "50M"),
+    ]
+    @test check_selection(TEST_DIR, records, 1) == 2
+end
+
 @testset "High depth" begin
     # Enough stale candidates to trigger compaction of the candidate heap
     rng = Xoshiro(3)
