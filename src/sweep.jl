@@ -2,6 +2,12 @@
 # templates is at least min(D, d(p)) at every position p, where d(p) is the full depth.
 # See algorithm.md for the algorithm.
 
+# Orders the blocks in `pending` and `active` by their first field alone (start, or stop).
+# Comparing whole tuples would also compare the template on ties, and check equality of
+# the first field before `<`. Ties don't affect the selection, so the order of equal
+# keys doesn't matter.
+const BY_FIRST = By(first)
+
 """
     template_hash(name::Union{AbstractString, Nothing})::UInt64
 
@@ -30,18 +36,31 @@ mutable struct Sweep
     const selected::Set{UInt64}
     # Blocks not yet reached by the sweep: (start, stop, template)
     const pending::Vector{Tuple{Int, Int, UInt64}}
-    # Blocks overlapping the current position: (stop, template).
-    # Its length is the full depth.
-    const active::Vector{Tuple{Int, UInt64}}
+    # Blocks overlapping the current position, as a bucket queue keyed by stop: a ring of
+    # linked lists of entries, where the blocks ending at `stop` are in bucket
+    # `(stop & (length(heads) - 1)) + 1`. All active stops are in
+    # `base:(base + length(heads) - 1)`, so each bucket holds blocks of a single stop.
+    # The ring grows when a longer block is activated.
+    heads::Vector{Int32}
+    # The next entry of each entry's list, or 0 at the end of a list.
+    # For free entries, the next free entry.
+    const entry_next::Vector{Int32}
+    const entry_template::Vector{UInt64}
+    # First free entry, or 0 if none
+    free::Int32
+    # The position of the last event, or less
+    base::Int
+    # A lower bound of the stops of the active blocks, which is at least `base`
+    lo::Int
+    # Number of active blocks, which is the full depth
+    n_active::Int
     # Active blocks of unselected templates, as a max-heap: (stop, template).
     # Entries are removed lazily, so it may contain blocks that have ended, or whose
     # template has been selected.
     const candidates::Vector{Tuple{Int, UInt64}}
-    # For each unselected template with active blocks, the stops of its active blocks.
+    # For each unselected template with active blocks, its number of active blocks.
     # Hence, an active block's template is selected iff it's not a key here.
-    const unselected::Dict{UInt64, Vector{Int}}
-    # Emptied vectors from `unselected`, for reuse
-    const spare::Vector{Vector{Int}}
+    const unselected::Dict{UInt64, Int}
     # Number of active blocks belonging to unselected templates
     n_unselected::Int
     # Number of active blocks belonging to selected templates
@@ -51,25 +70,39 @@ end
 function Sweep(depth::Int)
     depth > 0 || throw(ArgumentError("depth must be positive"))
     return Sweep(
-        depth, Set{UInt64}(), Tuple{Int, Int, UInt64}[], Tuple{Int, UInt64}[],
-        Tuple{Int, UInt64}[], Dict{UInt64, Vector{Int}}(), Vector{Int}[], 0, 0,
+        depth, Set{UInt64}(), Tuple{Int, Int, UInt64}[], zeros(Int32, 1024), Int32[],
+        UInt64[], Int32(0), 0, 0, 0, Tuple{Int, UInt64}[], Dict{UInt64, Int}(), 0, 0,
     )
 end
 
 function add_block!(sweep::Sweep, block::UnitRange{Int}, template::UInt64)
-    heappush!(sweep.pending, (first(block), last(block), template))
+    heappush!(sweep.pending, (first(block), last(block), template), BY_FIRST)
     return sweep
+end
+
+# The smallest stop of the active blocks, if any. Raises `lo` to it.
+function min_active_stop!(sweep::Sweep)::Union{Int, Nothing}
+    sweep.n_active == 0 && return nothing
+    heads = sweep.heads
+    mask = length(heads) - 1
+    lo = sweep.lo
+    while (@inbounds heads[(lo & mask) + 1]) == 0
+        lo += 1
+    end
+    sweep.lo = lo
+    return lo
 end
 
 # The next position where a block starts or ends, if any
 function next_event(sweep::Sweep)::Union{Int, Nothing}
-    (; pending, active) = sweep
+    pending = sweep.pending
+    stop = min_active_stop!(sweep)
     if isempty(pending)
-        isempty(active) ? nothing : (@inbounds active[1])[1] + 1
-    elseif isempty(active)
+        stop === nothing ? nothing : stop + 1
+    elseif stop === nothing
         (@inbounds pending[1])[1]
     else
-        min((@inbounds pending[1])[1], (@inbounds active[1])[1] + 1)
+        min((@inbounds pending[1])[1], stop + 1)
     end
 end
 
@@ -97,41 +130,81 @@ All blocks have ended, so the entries left in `candidates` are stale, and are di
 function finish_reference!(sweep::Sweep)
     sweep_until!(sweep, typemax(Int))
     empty!(sweep.candidates)
+    # Positions restart on the next reference
+    sweep.base = 0
+    sweep.lo = 0
     return sweep
 end
 
+# Grow the ring of `active` so it can hold a block ending at `stop`
+@noinline function grow_ring!(sweep::Sweep, stop::Int)
+    old = sweep.heads
+    mask = length(old) - 1
+    new = zeros(Int32, nextpow(2, 2 * (stop - sweep.base + 1)))
+    new_mask = length(new) - 1
+    for s in sweep.base:(sweep.base + mask)
+        @inbounds new[(s & new_mask) + 1] = old[(s & mask) + 1]
+    end
+    sweep.heads = new
+    return nothing
+end
+
 function process_event!(sweep::Sweep, position::Int)
-    (; active, pending, unselected, candidates) = sweep
+    (; pending, unselected, candidates, entry_next, entry_template) = sweep
     # Remove blocks that ended before this position
-    while !isempty(active) && (@inbounds active[1])[1] < position
-        (stop, template) = heappop!(active)
-        stops = get(unselected, template, nothing)
-        if stops === nothing
-            sweep.selected_depth -= 1
-        else
-            i = findfirst(==(stop), stops)::Int
-            @inbounds stops[i] = stops[end]
-            pop!(stops)
-            sweep.n_unselected -= 1
-            if isempty(stops)
-                delete!(unselected, template)
-                push!(sweep.spare, stops)
+    heads = sweep.heads
+    mask = length(heads) - 1
+    for stop in sweep.lo:(position - 1)
+        sweep.n_active == 0 && break
+        i = (stop & mask) + 1
+        entry = @inbounds heads[i]
+        entry == 0 && continue
+        @inbounds heads[i] = 0
+        while entry != 0
+            template = @inbounds entry_template[entry]
+            n = get(unselected, template, 0)
+            if n == 0
+                sweep.selected_depth -= 1
+            else
+                sweep.n_unselected -= 1
+                if n == 1
+                    delete!(unselected, template)
+                else
+                    unselected[template] = n - 1
+                end
             end
+            sweep.n_active -= 1
+            next = @inbounds entry_next[entry]
+            @inbounds entry_next[entry] = sweep.free
+            sweep.free = entry
+            entry = next
         end
     end
+    sweep.lo = max(sweep.lo, position)
+    sweep.base = position
     # Activate blocks starting at this position
     while !isempty(pending) && (@inbounds pending[1])[1] <= position
-        (_, stop, template) = heappop!(pending)
-        heappush!(active, (stop, template))
+        (_, stop, template) = heappop!(pending, BY_FIRST)
+        stop >= position + length(sweep.heads) && grow_ring!(sweep, stop)
+        entry = sweep.free
+        if entry == 0
+            push!(entry_next, 0)
+            push!(entry_template, template)
+            entry = Int32(length(entry_next))
+        else
+            sweep.free = @inbounds entry_next[entry]
+            @inbounds entry_template[entry] = template
+        end
+        heads = sweep.heads
+        i = (stop & (length(heads) - 1)) + 1
+        @inbounds entry_next[entry] = heads[i]
+        @inbounds heads[i] = entry
+        sweep.n_active += 1
+        sweep.lo = min(sweep.lo, stop)
         if template in sweep.selected
             sweep.selected_depth += 1
         else
-            stops = get(unselected, template, nothing)
-            if stops === nothing
-                stops = isempty(sweep.spare) ? Int[] : pop!(sweep.spare)
-                unselected[template] = stops
-            end
-            push!(stops, stop)
+            unselected[template] = get(unselected, template, 0) + 1
             sweep.n_unselected += 1
             heappush!(candidates, (stop, template), Reverse)
         end
@@ -139,25 +212,30 @@ function process_event!(sweep::Sweep, position::Int)
     # Select templates until the target depth is reached, preferring the template
     # whose block extends the furthest.
     # Every active block of an unselected template has an entry in `candidates`,
-    # so it can't run empty while selected_depth < length(active).
-    target = min(sweep.depth, length(active))
+    # so it can't run empty while selected_depth < n_active.
+    target = min(sweep.depth, sweep.n_active)
     while sweep.selected_depth < target
         (stop, template) = heappop!(candidates, Reverse)
         stop < position && continue
-        stops = pop!(unselected, template, nothing)
-        stops === nothing && continue
+        n = pop!(unselected, template, 0)
+        n == 0 && continue
         push!(sweep.selected, template)
-        sweep.selected_depth += length(stops)
-        sweep.n_unselected -= length(stops)
-        empty!(stops)
-        push!(sweep.spare, stops)
+        sweep.selected_depth += n
+        sweep.n_unselected -= n
     end
     # Remove stale entries, so `candidates` doesn't grow without bound in regions
-    # where no selection is needed.
+    # where no selection is needed. This doesn't use `filter!`, which would shrink the
+    # vector's memory, so it would be reallocated as it grows again.
     if length(candidates) > 2 * sweep.n_unselected + 1024
-        filter!(candidates) do (stop, template)
-            stop >= position && haskey(unselected, template)
+        j = 0
+        for candidate in candidates
+            (stop, template) = candidate
+            if stop >= position && haskey(unselected, template)
+                j += 1
+                @inbounds candidates[j] = candidate
+            end
         end
+        resize!(candidates, j)
         heapify!(candidates, Reverse)
     end
     return sweep

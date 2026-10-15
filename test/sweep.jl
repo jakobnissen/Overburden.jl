@@ -237,3 +237,71 @@ end
         @test check_selection(TEST_DIR, records, depth) < n_covering
     end
 end
+
+# Run the sweep on `references`, each a vector of (block, template) of one reference,
+# and return the selected templates.
+function sweep_blocks(references::Vector{Vector{Tuple{UnitRange{Int}, UInt64}}}, depth::Int)
+    sweep = Overburden.Sweep(depth)
+    for blocks in references
+        for (block, template) in sort(blocks; by = first ∘ first)
+            Overburden.sweep_until!(sweep, first(block))
+            Overburden.add_block!(sweep, block, template)
+        end
+        Overburden.finish_reference!(sweep)
+    end
+    return sweep.selected
+end
+
+# Check that the depth of the blocks of `selected` templates is at least min(depth, d(p))
+function check_block_depths(blocks::Vector{Tuple{UnitRange{Int}, UInt64}}, selected, depth::Int)
+    n = maximum(last(block) for (block, _) in blocks) + 1
+    full = zeros(Int, n)
+    out = zeros(Int, n)
+    for (block, template) in blocks
+        for d in (template in selected ? (full, out) : (full,))
+            d[first(block)] += 1
+            d[last(block) + 1] -= 1
+        end
+    end
+    @test all(>=(0), cumsum(out) .- min.(depth, cumsum(full)))
+end
+
+# The number of blocks selected by the sweep's greedy rule, evaluated naively at every
+# event position, for blocks of distinct templates
+function greedy_count(blocks::Vector{UnitRange{Int}}, depth::Int)::Int
+    selected = falses(length(blocks))
+    events = sort!(unique!(vcat(first.(blocks), last.(blocks) .+ 1)))
+    for p in events
+        covering = filter(i -> p in blocks[i], eachindex(blocks))
+        need = min(depth, length(covering)) - Base.count(i -> selected[i], covering)
+        need > 0 || continue
+        unselected = sort!(filter(i -> !selected[i], covering); by = i -> last(blocks[i]), rev = true)
+        selected[unselected[1:need]] .= true
+    end
+    return Base.count(selected)
+end
+
+@testset "Long and sparse blocks" begin
+    # Blocks much longer than the initial ring of the active blocks, and positions that
+    # wrap around the ring many times, with gaps where nothing is active.
+    rng = Xoshiro(4)
+    random_block(len) = (start = rand(rng, 1:300_000); start:(start + len - 1))
+    for _ in 1:5
+        lengths = [rand(rng, 50:300, 1500); rand(rng, 1:20_000, 30)]
+        blocks = map(random_block, lengths)
+        # A dense cluster, with several blocks ending at the same position
+        append!(blocks, [s:(s + rand(rng, 0:3) * 100) for s in rand(rng, 1000:1010, 60)])
+        for depth in (1, 3, 10)
+            # Blocks of distinct templates, so the sweep is optimal and matches the
+            # naive greedy rule. Two references, to reset in between.
+            tagged = [(block, UInt64(i)) for (i, block) in enumerate(blocks)]
+            selected = sweep_blocks([tagged, tagged], depth)
+            check_block_depths(tagged, selected, depth)
+            @test length(selected) == greedy_count(blocks, depth)
+            # Templates of several blocks
+            tagged = [(block, UInt64(rand(rng, 1:500))) for block in blocks]
+            selected = sweep_blocks([tagged], depth)
+            check_block_depths(tagged, selected, depth)
+        end
+    end
+end

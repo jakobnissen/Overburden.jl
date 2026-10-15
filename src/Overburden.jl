@@ -3,7 +3,7 @@ module Overburden
 using XAM2: XAM2, BAMReader, BAMRecord, BAMWriter, SAMHeader, XAMError, cigar, get_header, is_mapped, left_position, query_name, reference_index, references
 using BGZFLib: BGZFReader, BGZFError
 using BinaryHeaps: heapify!, heappop!, heappush!
-using Base.Order: Reverse
+using Base.Order: By, Reverse
 using CIGARStrings: CIGARStrings, BAMCIGAR, CIGARError, aligned_blocks
 # `construct_exact`, `help` and `valuetype` are used unqualified by the expansion of `@parser`
 using OptParse: @parser, arg, construct_exact, default, flag, help, integer, option, optparse, str, valuetype
