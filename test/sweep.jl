@@ -263,7 +263,7 @@ function check_block_depths(blocks::Vector{Tuple{UnitRange{Int}, UInt64}}, selec
             d[last(block) + 1] -= 1
         end
     end
-    @test all(>=(0), cumsum(out) .- min.(depth, cumsum(full)))
+    return @test all(>=(0), cumsum(out) .- min.(depth, cumsum(full)))
 end
 
 # The number of blocks selected by the sweep's greedy rule, evaluated naively at every
@@ -304,4 +304,22 @@ end
             check_block_depths(tagged, selected, depth)
         end
     end
+end
+
+@testset "Batches" begin
+    # Many small batches, and fewer batches than are in flight at once
+    rng = Xoshiro(5)
+    records = random_records(rng, 300)
+    path = write_records(TEST_DIR, records)
+    for depth in (1, 5)
+        expected = select_templates(path, depth; n_workers = 1)
+        for (batch_size, n_batches) in ((1, 1), (3, 2), (50, 4))
+            @test select_templates(path, depth; n_workers = 1, batch_size, n_batches) == expected
+        end
+    end
+    # An error in a later batch is thrown as is, after earlier batches were swept
+    lines = [sam_line("r$i", 0, "chr1", i, "4M") for i in 1:100]
+    push!(lines, sam_line("bad", 0, "chr1", 50, "4M"))
+    path = sam_to_bam(TEST_DIR, HEADER * join(lines))
+    @test_throws OverburdenError select_templates(path, 1; n_workers = 1, batch_size = 3, n_batches = 2)
 end

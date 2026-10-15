@@ -107,6 +107,23 @@ case, a long block among sparse short ones, the stretch up to the long block's e
 scanned again after each short block ends. Memory is `O(max depth + longest block)` plus
 the selected set.
 
+### Pipeline
+
+Pass 1 runs in two concurrent tasks. The calling task reads records and checks their sort
+order and CIGARs, computing their blocks and QNAME hashes. A spawned task runs the sweep.
+The reader reuses one record (`copy = false`), so the blocks are copied into batches of
+4096 records, as parallel vectors. Records without blocks are left out, since they don't
+affect the sweep. Batches go to the sweep through one channel, and return for reuse through
+another. Four batches are in use, which bounds memory, and `put!` never blocks.
+
+All errors from bad input come from the reader, so they are thrown on the calling task
+unwrapped. On an error, the reader closes the channel and waits for the sweep task to end.
+If the sweep task fails, the channel of free batches is closed (`bind`), so the reader
+doesn't wait forever.
+
+On CDIFFICILE (D=20, 4 threads), each stage alone takes about 0.57 s, and pass 1 takes
+0.69 s, down from 1.09 s with one task. Batch sizes from 1024 to 16384 perform the same.
+
 ## Pass 2: output
 
 Seek back to the first record (`XAM2.seek_first_record`), stream all records again, and
@@ -125,6 +142,8 @@ their input order.
   `active` grows and wraps around many times, with gaps where nothing is active. It checks
   the depth target, and checks that the number of selected blocks matches the greedy rule
   evaluated naively at every event.
+* It checks that the selection doesn't depend on the batch size or the number of batches,
+  and that an error in a later batch is thrown unwrapped.
 * `test/output.jl` checks that pass 2 writes exactly the records of the selected templates.
 
 ## Possible later improvements

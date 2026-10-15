@@ -97,7 +97,7 @@ end
 function next_event(sweep::Sweep)::Union{Int, Nothing}
     pending = sweep.pending
     stop = min_active_stop!(sweep)
-    if isempty(pending)
+    return if isempty(pending)
         stop === nothing ? nothing : stop + 1
     elseif stop === nothing
         (@inbounds pending[1])[1]
@@ -241,11 +241,6 @@ function process_event!(sweep::Sweep, position::Int)
     return sweep
 end
 
-# TODO: More efficient to return a BitVector? Must be stored as set of hashes since
-# reads may appear several times and must be deduplicated, but we can map these to
-# their first occurrence in the file and then store a BitVector of kept reads.
-# This makes lookup in second pass faster, and takes less memory in second pass
-# (though more in first pass)
 """
     select_templates(reader::BAMReader, depth::Int)::Set{UInt64}
 
@@ -255,12 +250,77 @@ the selected templates is at least `min(depth, d(p))`, where `d(p)` is the depth
 all mapped records.
 Throw an `OverburdenError` if the records are not coordinate sorted, or have a
 malformed CIGAR, or an `XAMError` if the file is otherwise malformed.
+
+The records are read and turned into blocks on the calling task, and the sweep runs
+concurrently in another task. Batches of blocks are passed between them through channels.
 """
-function select_templates(reader::BAMReader, depth::Int)::Set{UInt64}
-    sweep = Sweep(depth)
+function select_templates(
+        reader::BAMReader, depth::Int; batch_size::Int = 4096, n_batches::Int = 4,
+    )::Set{UInt64}
+    # Both channels can hold all batches, so `put!` never blocks
+    full = Channel{Batch}(n_batches)
+    free = Channel{Batch}(n_batches)
+    for _ in 1:n_batches
+        put!(free, Batch())
+    end
+    sweeper = Threads.@spawn sweep_batches(full, free, Sweep(depth))
+    # If the sweep fails, waiting for a free batch throws, instead of blocking forever
+    bind(free, sweeper)
+    try
+        read_batches(reader, full, free, batch_size)
+    catch
+        close(full)
+        # Don't leave the sweep running. A failure of the sweep is then secondary.
+        try
+            wait(sweeper)
+        catch
+        end
+        rethrow()
+    end
+    close(full)
+    # Assert the type, since `fetch` returns `Any`, and converting would need dynamic dispatch
+    return fetch(sweeper)::Set{UInt64}
+end
+
+function select_templates(path::String, depth::Int; n_workers::Int = Threads.nthreads(), kwargs...)::Set{UInt64}
+    reader = open_bam(path; n_workers, copy = false)
+    return try
+        select_templates(reader, depth; kwargs...)
+    finally
+        close(reader)
+    end
+end
+
+# The blocks of a batch of records, passed from the reader to the sweep.
+# Only records with blocks are included.
+struct Batch
+    # Per record
+    references::Vector{Int}
+    positions::Vector{Int}
+    templates::Vector{UInt64}
+    # The blocks of record `i` end at index `block_ends[i]` of `blocks`
+    block_ends::Vector{Int}
+    blocks::Vector{UnitRange{Int}}
+end
+
+Batch() = Batch(Int[], Int[], UInt64[], Int[], UnitRange{Int}[])
+
+Base.length(batch::Batch) = length(batch.templates)
+
+function Base.empty!(batch::Batch)
+    empty!(batch.references)
+    empty!(batch.positions)
+    empty!(batch.templates)
+    empty!(batch.block_ends)
+    empty!(batch.blocks)
+    return batch
+end
+
+# Read records, check them, and send their blocks to `full` in batches of `batch_size`
+# records, taking empty batches from `free`.
+function read_batches(reader::BAMReader, full::Channel{Batch}, free::Channel{Batch}, batch_size::Int)
     checker = SortChecker(length(XAM2.references(reader)))
-    # Index of the reference whose blocks are in `sweep`, or 0 if none
-    sweep_reference = 0
+    batch = empty!(take!(free))
     n = 0
     while true
         record = XAM2.try_read!(reader)
@@ -271,33 +331,56 @@ function select_templates(reader::BAMReader, depth::Int)::Set{UInt64}
         is_mapped(record) || continue
         index = @something reference_index(record) continue
         position = @something left_position(record) continue
-        if index != sweep_reference
-            finish_reference!(sweep)
-            sweep_reference = index
-        else
-            sweep_until!(sweep, position)
-        end
         cig = cigar(record)
         cig === nothing && continue
         cig isa BAMCIGAR || throw_bad_cigar(record, n, cig)
-        template = template_hash(query_name(record))
         # Blocks cover M, =, X and D operations, and are split by N.
         # They are relative to the record's position.
+        n_blocks = length(batch.blocks)
         for block in aligned_blocks(CIGARStrings.ref, CIGARStrings.aln, cig)
-            add_block!(sweep, block .+ (position - 1), template)
+            push!(batch.blocks, block .+ (position - 1))
         end
+        # Records without blocks don't affect the sweep
+        length(batch.blocks) == n_blocks && continue
+        push!(batch.references, index)
+        push!(batch.positions, position)
+        push!(batch.templates, template_hash(query_name(record)))
+        push!(batch.block_ends, length(batch.blocks))
+        if length(batch) >= batch_size
+            put!(full, batch)
+            batch = empty!(take!(free))
+        end
+    end
+    isempty(batch.templates) || put!(full, batch)
+    return nothing
+end
+
+# Sweep the batches from `full` until it's closed, returning each batch to `free`.
+# Return the selected templates.
+function sweep_batches(full::Channel{Batch}, free::Channel{Batch}, sweep::Sweep)::Set{UInt64}
+    # Index of the reference whose blocks are in `sweep`, or 0 if none
+    sweep_reference = 0
+    for batch in full
+        (; references, positions, templates, block_ends, blocks) = batch
+        first_block = 1
+        for i in eachindex(references, positions, templates, block_ends)
+            index = references[i]
+            if index != sweep_reference
+                finish_reference!(sweep)
+                sweep_reference = index
+            else
+                sweep_until!(sweep, positions[i])
+            end
+            last_block = block_ends[i]
+            for j in first_block:last_block
+                add_block!(sweep, blocks[j], templates[i])
+            end
+            first_block = last_block + 1
+        end
+        put!(free, batch)
     end
     finish_reference!(sweep)
     return sweep.selected
-end
-
-function select_templates(path::String, depth::Int; n_workers::Int = Threads.nthreads())::Set{UInt64}
-    reader = open_bam(path; n_workers, copy = false)
-    return try
-        select_templates(reader, depth)
-    finally
-        close(reader)
-    end
 end
 
 @noinline function throw_bad_cigar(record::BAMRecord, n::Int, err::Union{CIGARError, XAMError})
