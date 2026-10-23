@@ -22,6 +22,12 @@ end
 
 print_options_help(io::IO) = print_help(io, OptParse.lift(Options), String[]; progname = "overburden")
 
+"Print `xs` and a newline to `Core.stderr`, unless `quiet`"
+function eprintln(quiet::Bool, xs...)::Nothing
+    quiet || println(Core.stderr, xs...)
+    return nothing
+end
+
 const ERROR_TYPES = Union{OverburdenError, XAMError, BGZFError, SystemError, Base.IOError}
 
 function print_error(e::ERROR_TYPES)
@@ -44,9 +50,18 @@ end
 Entry point of the `overburden` executable. Return the exit code: 0 on success,
 1 on errors, and 2 on invalid command-line arguments.
 """
-function (@main)(args::Vector{String})::Cint
+(@main)(args::Vector{String})::Cint = run_cli(args, false)
+
+"""
+    run_cli(args::Vector{String}, quiet::Bool)::Cint
+
+Implementation of `main`. If `quiet`, print nothing, except for errors from parsing
+`args`. This lets the precompile workload run the actual entry point without output.
+`quiet` is an argument, not a constant, so `main` compiles the same code.
+"""
+function run_cli(args::Vector{String}, quiet::Bool)::Cint
     if isempty(args)
-        print_options_help(Core.stderr)
+        quiet || print_options_help(Core.stderr)
         return 2
     end
     # Help and version are handled before parsing, since the positional arguments
@@ -54,10 +69,10 @@ function (@main)(args::Vector{String})::Cint
     for arg in args
         arg == "--" && break
         if arg in ("-h", "--help")
-            print_options_help(Core.stdout)
+            quiet || print_options_help(Core.stdout)
             return 0
         elseif arg in ("-V", "--version")
-            println(Core.stdout, "overburden ", OVERBURDEN_VERSION)
+            quiet || println(Core.stdout, "overburden ", OVERBURDEN_VERSION)
             return 0
         end
     end
@@ -69,11 +84,11 @@ function (@main)(args::Vector{String})::Cint
             options.input, options.output, options.depth;
             compress_level = options.level, command_line,
         )
-        println(Core.stderr, "Wrote ", n_written, " records of ", n_templates, " templates")
+        eprintln(quiet, "Wrote ", n_written, " records of ", n_templates, " templates")
         0
     catch e
         e isa ERROR_TYPES || rethrow()
-        print_error(e)
+        quiet || print_error(e)
         1
     end
 end

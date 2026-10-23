@@ -6,6 +6,7 @@ using BinaryHeaps: heapify!, heappop!, heappush!
 using Base.Order: By, Reverse
 using CIGARStrings: CIGARStrings, BAMCIGAR, CIGARError, aligned_blocks
 using OptParse: OptParse, @parser, arg, default, flag, integer, option, optparse, print_help, str
+using PrecompileTools: @compile_workload, @setup_workload
 
 # Read at precompile time, so the executable doesn't need the Project.toml
 const PROJECT_TOML = joinpath(dirname(@__DIR__), "Project.toml")
@@ -117,5 +118,6 @@ end
 include("sweep.jl")
 include("output.jl")
 include("cli.jl")
+include("precompile.jl")
 
 end # module Overburden
