@@ -6,7 +6,10 @@ Overburden can be used to reduce the size of read files without removing valuabl
 
 ## Installation
 Make sure you have a recent version of Julia installed (Julia 1.13+).
-Install it as a Julia app:
+
+Install Julia with `juliaup`: `curl -fsSL https://install.julialang.org | sh`
+
+Then, install Overburden as a Julia app:
 
 ```shell
 julia --startup=no -e 'using Pkg; Pkg.Apps.add(url="https://github.com/jakobnissen/Overburden.jl")'
