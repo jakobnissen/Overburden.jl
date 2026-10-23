@@ -31,13 +31,15 @@ end
         input = write_records(TEST_DIR, records)
         for depth in (1, 3, 20)
             output = tempname(TEST_DIR) * ".bam"
-            selected = select_templates(input, depth; n_workers = 1)
-            (; n_templates, n_written) = overburden(input, output, depth; n_workers = 1)
-            @test n_templates == length(selected)
+            (; selected, records_seen) = select_templates(input, depth; n_workers = 1)
+            @test records_seen == length(records)
+            stats = overburden(input, output, depth; n_workers = 1)
+            @test stats.original_records == length(records)
+            @test stats.selected_templates == length(selected)
             # The records of the selected templates, in input order
             expected = filter(r -> template_hash(r[1]) in selected, read_summary(input))
             @test read_summary(output) == expected
-            @test n_written == length(expected)
+            @test stats.written_records == length(expected)
         end
     end
 end
@@ -132,7 +134,7 @@ end
     (code, out, err) = run_main([input, output])
     @test code == 0
     @test isempty(out)
-    @test err == "Wrote 4 records of 4 templates\n"
+    @test err == "Read 7 input records, and wrote 4 records of 4 templates\n"
     @test length(read_summary(output)) == 4
     @test run_main(["-d", "1", input, fresh_output()])[1] == 0
     @test run_main([input, fresh_output(), "--depth=1"])[1] == 0

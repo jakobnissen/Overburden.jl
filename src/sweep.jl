@@ -242,12 +242,14 @@ function process_event!(sweep::Sweep, position::Int)
 end
 
 """
-    select_templates(reader::BAMReader, depth::Int)::Set{UInt64}
+    select_templates(
+        reader::BAMReader, depth::Int,
+    )::@NamedTuple{selected::Set{UInt64}, records_seen::Int}
 
-Read all remaining records of `reader`, and return the [`template_hash`](@ref)es of a
-near-minimal set of templates, such that at every reference position `p`, the depth of
+Read all remaining records of `reader`. Return `selected`, the [`template_hash`](@ref)es
+of a near-minimal set of templates, such that at every reference position `p`, the depth of
 the selected templates is at least `min(depth, d(p))`, where `d(p)` is the depth of
-all mapped records.
+all mapped records, and `records_seen`, the number of records read.
 Throw an `OverburdenError` if the records are not coordinate sorted, or have a
 malformed CIGAR, or an `XAMError` if the file is otherwise malformed.
 
@@ -256,7 +258,7 @@ concurrently in another task. Batches of blocks are passed between them through 
 """
 function select_templates(
         reader::BAMReader, depth::Int; batch_size::Int = 4096, n_batches::Int = 4,
-    )::Set{UInt64}
+    )::@NamedTuple{selected::Set{UInt64}, records_seen::Int}
     # Both channels can hold all batches, so `put!` never blocks
     full = Channel{Batch}(n_batches)
     free = Channel{Batch}(n_batches)
@@ -266,8 +268,9 @@ function select_templates(
     sweeper = Threads.@spawn sweep_batches(full, free, Sweep(depth))
     # If the sweep fails, waiting for a free batch throws, instead of blocking forever
     bind(free, sweeper)
+    records_seen = 0
     try
-        read_batches(reader, full, free, batch_size)
+        records_seen = read_batches(reader, full, free, batch_size)
     catch
         close(full)
         # Don't leave the sweep running. A failure of the sweep is then secondary.
@@ -279,10 +282,16 @@ function select_templates(
     end
     close(full)
     # Assert the type, since `fetch` returns `Any`, and converting would need dynamic dispatch
-    return fetch(sweeper)::Set{UInt64}
+    selected = fetch(sweeper)::Set{UInt64}
+    return (; selected, records_seen)
 end
 
-function select_templates(path::String, depth::Int; n_workers::Int = Threads.nthreads(), kwargs...)::Set{UInt64}
+function select_templates(
+        path::String,
+        depth::Int;
+        n_workers::Int = Threads.nthreads(),
+        kwargs...
+    )::@NamedTuple{selected::Set{UInt64}, records_seen::Int}
     reader = open_bam(path; n_workers, copy = false)
     return try
         select_templates(reader, depth; kwargs...)
@@ -317,8 +326,8 @@ function Base.empty!(batch::Batch)
 end
 
 # Read records, check them, and send their blocks to `full` in batches of `batch_size`
-# records, taking empty batches from `free`.
-function read_batches(reader::BAMReader, full::Channel{Batch}, free::Channel{Batch}, batch_size::Int)
+# records, taking empty batches from `free`. Return the number of records read.
+function read_batches(reader::BAMReader, full::Channel{Batch}, free::Channel{Batch}, batch_size::Int)::Int
     checker = SortChecker(length(XAM2.references(reader)))
     batch = empty!(take!(free))
     n = 0
@@ -352,7 +361,7 @@ function read_batches(reader::BAMReader, full::Channel{Batch}, free::Channel{Bat
         end
     end
     isempty(batch.templates) || put!(full, batch)
-    return nothing
+    return n
 end
 
 # Sweep the batches from `full` until it's closed, returning each batch to `free`.

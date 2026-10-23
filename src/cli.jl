@@ -80,11 +80,14 @@ function run_cli(args::Vector{String}, quiet::Bool)::Cint
     options === nothing && return 2
     command_line = join(pushfirst!(copy(args), "overburden"), ' ')
     return try
-        (; n_templates, n_written) = overburden(
+        stats = overburden(
             options.input, options.output, options.depth;
             compress_level = options.level, command_line,
         )
-        eprintln(quiet, "Wrote ", n_written, " records of ", n_templates, " templates")
+        eprintln(
+            quiet, "Read ", stats.original_records, " input records, and wrote ",
+            stats.written_records, " records of ", stats.selected_templates, " templates",
+        )
         0
     catch e
         e isa ERROR_TYPES || rethrow()

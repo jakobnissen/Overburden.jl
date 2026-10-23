@@ -63,11 +63,24 @@ end
 const DEFAULT_COMPRESS_LEVEL = 5
 
 """
+    OutputStats
+
+Statistics of a run of [`overburden`](@ref): the number of records in the input
+(`original_records`), the number of records written to the output (`written_records`),
+and the number of templates selected (`selected_templates`).
+"""
+struct OutputStats
+    original_records::Int
+    written_records::Int
+    selected_templates::Int
+end
+
+"""
     overburden(
         input::String, output::String, depth::Int;
         n_workers::Int = Threads.nthreads(), compress_level::Int = $(DEFAULT_COMPRESS_LEVEL),
         command_line::Union{String, Nothing} = nothing,
-    )::@NamedTuple{n_templates::Int, n_written::Int}
+    )::OutputStats
 
 Read the coordinate-sorted BAM file `input`, and write the records of a near-minimal set
 of its templates to the BAM file `output`, such that at every reference position `p`,
@@ -76,8 +89,7 @@ See [`select_templates`](@ref).
 
 The output is compressed with BGZF at `compress_level`, from 1 (fastest) to 12
 (smallest). It has the input's header with an added `@PG` line, whose `CL` field is
-`command_line`, if given. Return the number of templates selected, and the number of
-records written.
+`command_line`, if given. Return an [`OutputStats`](@ref).
 
 Throw an `OverburdenError` on bad input, such as unsorted records, or if `output` already
 exists, is the same file as `input`, or its directory does not exist. The output is created
@@ -91,19 +103,19 @@ function overburden(
         n_workers::Int = Threads.nthreads(),
         compress_level::Int = DEFAULT_COMPRESS_LEVEL,
         command_line::Union{String, Nothing} = nothing,
-    )::@NamedTuple{n_templates::Int, n_written::Int}
+    )::OutputStats
     in(compress_level, 1:12) || throw(ArgumentError("compress_level must be in 1:12"))
     reader = open_bam(input; n_workers, copy = false)
     return try
         create_output(input, output)
         try
-            selected = select_templates(reader, depth)
+            (; selected, records_seen) = select_templates(reader, depth)
             header = output_header(reader, command_line)
             XAM2.seek_first_record(reader)
             n_written = BAMWriter(open(output, "w"), header, references(reader); n_workers, compress_level) do writer
                 write_templates(writer, reader, selected)
             end
-            (; n_templates = length(selected), n_written)
+            OutputStats(records_seen, n_written, length(selected))
         catch
             # The output was created above, so it's ours to remove. Don't leave an empty or
             # truncated file, which would block the next run.

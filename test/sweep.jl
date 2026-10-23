@@ -62,7 +62,7 @@ end
 # requirements, and return the number of selected templates.
 function check_selection(dir::String, records::Vector{TestRecord}, depth::Int)::Int
     path = write_records(dir, records)
-    selected = select_templates(path, depth; n_workers = 1)
+    (; selected) = select_templates(path, depth; n_workers = 1)
     is_selected(r::TestRecord) = template_hash(r.name) in selected
     full = depths(Returns(true), records)
     out = depths(is_selected, records)

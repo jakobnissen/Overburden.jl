@@ -37,7 +37,7 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
 err="$("$EXE" -d 1 test/data/sorted.bam "$OUT/out.bam" 2>&1)" || fail "exit code on sorted input"
-[[ "$err" == "Wrote 4 records of 3 templates" ]] || fail "unexpected output on sorted input: $err"
+[[ "$err" == "Read 5 input records, and wrote 4 records of 3 templates" ]] || fail "unexpected output on sorted input: $err"
 # Check the output is a valid BAM file, by reading it back
 "$EXE" -d 1 "$OUT/out.bam" "$OUT/out2.bam" 2>/dev/null || fail "exit code on reading the output"
 

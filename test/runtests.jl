@@ -51,7 +51,7 @@ function error_message(f)
 end
 
 # Number of templates selected from the BAM file at `path`
-count(path; depth = 20) = length(select_templates(path, depth; n_workers = 1))
+count(path; depth = 20) = length(select_templates(path, depth; n_workers = 1).selected)
 
 mktempdir() do dir
     @testset "Sorted input" begin
