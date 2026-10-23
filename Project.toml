@@ -14,9 +14,6 @@ XAM2 = "648a2d38-8fdb-4170-a152-848d525b0756"
 [sources]
 XAM2 = {rev = "430181a51", url = "https://github.com/jakobnissen/XAM2.jl"}
 
-[apps]
-overburden = {}
-
 [compat]
 BGZFLib = "=0.2.0"
 BinaryHeaps = "=1.1.0"
@@ -26,6 +23,8 @@ MemoryViews = "=0.5.0"
 OptParse = "=0.4.3"
 XAM2 = "0.1.0"
 julia = "1.13"
+
+[apps.overburden]
 
 [extras]
 MemoryViews = "a791c907-b98b-4e44-8f4d-e4c2362c6b2f"

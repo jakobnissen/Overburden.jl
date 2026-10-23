@@ -1,12 +1,45 @@
 # Algorithm
 
 Overburden selects templates in two passes over the input BAM file. Pass 1 chooses the
-templates, and pass 2 writes them. The problem is stated in [PLAN.md](PLAN.md).
+templates, and pass 2 writes them.
 
-Template selection on spliced, multi-segment templates is a set multicover problem
-(NP-hard). For contiguous single-segment reads, the sweep below is exactly optimal
-(exchange argument). For everything else it is a greedy heuristic: it guarantees the depth
-target, but not minimality.
+## Problem
+
+The input is a coordinate-sorted BAM file and a minimum depth `D`. A template is all
+records that share a QNAME, e.g. a single read, or both mates of a pair, together with
+their secondary and supplementary alignments. The output is a subset of the templates.
+Each template is written in full or not at all.
+
+Depth is measured over aligned blocks. Every mapped record with a CIGAR covers one or more
+blocks on its reference: the CIGAR's `M`, `=`, `X` and `D` operations, split at `N`
+operations. The depth `d(p)` at a position `p` is the number of blocks covering `p`. So two
+overlapping mates count twice. Let `s(p)` be the same count over the selected templates only.
+
+The task is to select as few templates as possible, such that at every position
+`s(p) >= t(p)`, where `t(p) = min(D, d(p))` is the target depth. Positions with depth
+below `D` keep all of their reads, and positions with higher depth keep at least `D`.
+Selecting every template always meets the target, so a solution always exists. The aim is
+to discard as many redundant templates as possible.
+
+### Hardness
+
+This is a set multicover problem. The positions are the elements, each with demand `t(p)`,
+and each template is the multiset of positions its blocks cover. Finding the minimum
+number of templates is NP-hard, even for `D = 1`. Any instance of the minimum set cover
+problem can be encoded as an input file. Number the elements `1..n`, and put element `i` at
+position `2i`, so that no two elements are adjacent. Then turn each set into one template
+with a 1 bp block at the position of each of its elements. The template can be one record
+spliced with `N` operations, or several records with the same QNAME. For `D = 1`, the target
+is 1 at exactly the elements' positions. So a selection meets the target iff the
+corresponding sets cover all elements, and a minimum selection is a minimum set cover.
+The decision version ("can the target be met with at most `k` templates?") is NP-complete.
+
+The reduction needs templates with arbitrarily many blocks. Inputs where every template
+has at most two contiguous blocks, e.g. unspliced paired-end reads, are a restricted case
+(covering points with 2-intervals). Whether that case is also NP-hard has not been checked
+here. For contiguous single-segment reads the problem is interval multicover, which the
+sweep below solves exactly (exchange argument). For everything else the sweep is a greedy
+heuristic: it guarantees the depth target, but not minimality.
 
 ## Pass 1: sweep (selection)
 

@@ -18,6 +18,15 @@ rm -rf build
 julia --project="$JULIAC_ENV" -e 'using JuliaC; JuliaC._main_cli(ARGS)' -- \
     --output-exe overburden --trim=safe --bundle build .
 
+# juliac bundles libraries that the trimmed executable never loads.
+# Remove them to shrink build/ from ~73 MB to ~26 MB. `rm -f` does not fail if
+# a future Julia version no longer bundles some of them.
+# libstdc++, libgcc_s, libatomic, libunwind, libz, libzstd and libopenlibm are needed.
+for lib in libopenblas64_ libblastrampoline libgfortran libquadmath libgomp \
+    libmpfr libgmp libpcre2-8 libdSFMT libssp; do
+    rm -f build/lib/julia/"$lib".so build/lib/julia/"$lib".so.* build/lib/julia/"$lib".[0-9]*.so
+done
+
 EXE=./build/bin/overburden
 fail() {
     echo "SMOKE TEST FAILED: $1" >&2
